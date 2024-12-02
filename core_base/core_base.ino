@@ -46,6 +46,17 @@ void setup()
   *******************************************************************************/
   initOdom();
   initPrefix();
+
+  /*******************************************************************************
+  * Motors setup (BLDC, Servo)
+  *******************************************************************************/
+  drv_pwm_set_freq(SERVO, 500);
+  drv_pwm_setup(SERVO);
+  drv_pwm_set_duty(SERVO, 10, 512);
+
+  drv_pwm_set_freq(BLDC, 100);
+  drv_pwm_setup(BLDC);
+  drv_pwm_set_duty(BLDC, 10, 512);
   
   /*******************************************************************************
   * Pin mode set (INPUT/OUTPUT, Interrupt)
@@ -67,6 +78,47 @@ void setup()
 }
 
 /*******************************************************************************
+* Pin mode set (INPUT/OUTPUT, Interrupt)
+*******************************************************************************/
+void controlDCMotor()
+{
+  // Kinematic Bicycle Model에 의해 앞바퀴 각도를 계산
+  float linear_x = goal_velocity[LINEAR], angular_z = goal_velocity[ANGULAR];
+  float duty = (MIN_DUTY + MAX_DUTY)/2;
+  if (angular_z || linear_x) {
+    float steering_angle_radians = atan(WHEEL_SEPARATION * angular_z / linear_x);
+
+    // 라디안 값을 도(degree) 단위로 변환
+    float steering_angle_degrees = steering_angle_radians * (180.0 / M_PI);
+
+    // 각도가 -60도에서 60도 사이로 제한되도록 클리핑
+    if (steering_angle_degrees < MIN_ANGLE) steering_angle_degrees = MIN_ANGLE;
+    if (steering_angle_degrees > MAX_ANGLE) steering_angle_degrees = MAX_ANGLE;
+
+    // 각도와 duty cycle을 선형적으로 변환
+    duty = (steering_angle_degrees - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE) * (MAX_DUTY - MIN_DUTY) + MIN_DUTY;
+  }
+  int pwmval = map(duty, 0, 100, 0, 1023);     // scale it for use with the servo (value between 0 and 180)
+  drv_pwm_set_duty(SERVO, 10, pwmval);
+}
+
+void controlBLDCMotor()
+{
+  float linear_x = goal_velocity[LINEAR], angular_z = goal_velocity[ANGULAR];
+  
+  if (linear_x < -1.0) linear_x = -1.0;
+  else if (linear_x > 1.0) linear_x = 1.0;
+
+  // linear_x를 -1.0에서 1.0 → 13에서 17로 선형 변환
+  float linxduty = 13 + (linear_x + 1.0) * (17.0 - 13.0) / 2.0;
+
+  // duty를 0~100 → 0~1023으로 변환
+  int pwmVal = (int)(linxduty * 1023.0 / 100.0);
+
+  drv_pwm_set_duty(BLDC, 10, pwmVal);
+}
+
+/*******************************************************************************
 * Loop function
 *******************************************************************************/
 void loop() 
@@ -85,7 +137,7 @@ void loop()
       // motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, zero_velocity);
     } 
     else {
-      // motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, goal_velocity);
+      controlDCMotor();
     }
     tTime[0] = t;
   }
@@ -190,7 +242,7 @@ void updateGoalVelocity(void)
 *******************************************************************************/
 void updateMotorInfo(void)
 {
-  
+
 }
 
 /*******************************************************************************
@@ -393,11 +445,17 @@ void initOdom(void)
 void hallSeonsor_ISR(void)
 {
   unsigned long currentTime = micros();  // 현재 시간(us) 단위로 읽기
-  unsigned long timeDiff = currentTime - lastTimeA;  // 두 이벤트 간 시간 차 계산
+  unsigned long timeDiff = (currentTime - lastTimeA) / 1.0e6;;  // 두 이벤트 간 시간 차 계산
   lastTimeA = currentTime;
   
-  // RPM 계산: (60 * 1,000,000) / (한 바퀴 당 이벤트 수 * 시간 차)
-  rpm = (60 * 1000000L) / (6 * timeDiff);  // 6은 한 바퀴에 발생하는 이벤트 수
+  // Store deltaT in the buffer
+  deltaT_buffer[buffer_index] = timeDiff;
+  buffer_index = (buffer_index + 1) % FILTER_WINDOW_SIZE;
+
+  // Update the sample count (capped at the buffer size)
+  if (sample_count < FILTER_WINDOW_SIZE) {
+    sample_count++;
+  }
 }
 
 /*******************************************************************************

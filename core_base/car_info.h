@@ -16,4 +16,10 @@
 #define MIN_LINEAR_VELOCITY              -MAX_LINEAR_VELOCITY  
 #define MIN_ANGULAR_VELOCITY             -MAX_ANGULAR_VELOCITY 
 
+#define MIN_ANGLE                        -60.0          // 최소 각도
+#define MAX_ANGLE                        60.0           // 최대 각도
+#define MIN_DUTY                         53             // 최소 duty cycle (%)
+#define MAX_DUTY                         98             // 최대 duty cycle (%)
+#define MID_DUTY                         0              // 0도에 해당하는 duty cycle (%)
+
 #endif  //CAR_INFO_H_

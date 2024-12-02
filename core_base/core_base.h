@@ -42,6 +42,9 @@
 #define DEG2RAD(x)                       (x * 0.01745329252)  // *PI/180
 #define RAD2DEG(x)                       (x * 57.2957795131)  // *180/PI
 #define TICK2RAD                         0.001533981  // 0.087890625[deg] * 3.14159265359 / 180 = 0.001533981f
+#define M_PI 3.14159265358979323846
+
+#define FILTER_WINDOW_SIZE               10         // Hall Sensor window size
 
 // #define DEBUG
 #define SERIAL_DEBUG                     1
@@ -52,7 +55,9 @@
 // PIN Define
 #define LED_ERROR                        22
 #define LED_WORKING_CHECK                23
-#define HALLA                            16
+#define BLDC                              5
+#define SERVO                             6
+#define HALLA                             2
 #define HALLB                            17
 #define HALLC                            18
 
@@ -126,10 +131,13 @@ uint32_t tTime[10];
 * Calculation for odometry
 *******************************************************************************/
 bool init_encoder = true;
+volatile float deltaT_buffer[FILTER_WINDOW_SIZE] = {0};
 int32_t last_diff_tick[WHEEL_NUM] = {0, 0};
 double  last_rad[WHEEL_NUM]       = {0.0, 0.0};
 double  last_velocity[WHEEL_NUM]  = {0.0, 0.0};
-volatile unsigned long lastTimeA = 0;
+volatile unsigned long lastTimeA  = 0;
+volatile int buffer_index         = 0; // Index for writing to the buffer
+volatile int sample_count         = 0; // Total number of samples in the buffer
 volatile int rpm = 0;
 
 /*******************************************************************************
@@ -154,6 +162,8 @@ double qx = 0.0, qy = 0.0, qz = 0.0, qw = 0.0;
 * Update control message from RC controller
 *******************************************************************************/
 void getDataFromRemoteController(void);
+void controlDCMotor(void);
+void controlBLDCMotor(void);
 
 // etc
 rcl_subscription_t subscriber;
