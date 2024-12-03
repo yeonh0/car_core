@@ -7,10 +7,10 @@
 #define WHEEL_SEPARATION                 0.281           // meter (11'' ~= 281mm)
 #define TURNING_RADIUS                   0.080           // meter - 계산 필요
 #define ROBOT_RADIUS                     0.268           // meter (차량 길이 = 21'' -> 21''/2 ~= 267.5mm)
-#define ENCODER_MIN                      -2147483648     // raw
-#define ENCODER_MAX                      2147483648      // raw
+#define DRIVE_RATIO                      19.69           // 차량 기어비
 
-#define MAX_LINEAR_VELOCITY              (WHEEL_RADIUS * 2 * 3.14159265359 * 61 / 60) // m/s  (BURGER : 61[rpm], WAFFLE : 77[rpm])
+// #define MAX_LINEAR_VELOCITY              (WHEEL_RADIUS * 2 * 3.14159265359 * 61 / 60) // m/s  (BURGER : 61[rpm], WAFFLE : 77[rpm])
+#define MAX_LINEAR_VELOCITY              1.5
 #define MAX_ANGULAR_VELOCITY             (MAX_LINEAR_VELOCITY / TURNING_RADIUS)       // rad/s
 
 #define MIN_LINEAR_VELOCITY              -MAX_LINEAR_VELOCITY  

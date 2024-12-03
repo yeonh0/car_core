@@ -7,6 +7,8 @@ void error_loop()
     delay(100);
   }
 }
+rcl_publisher_t helohelo;
+std_msgs__msg__Int32 msg;
 
 void setup() 
 {
@@ -14,9 +16,9 @@ void setup()
   * Initialize Micro ROS
   *******************************************************************************/
   set_microros_transports();                                                // Init transport
+  delay(2000);
   allocator = rcl_get_default_allocator();                                  // Init allocator
   RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));                // Init support
-  RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));  // Create executor
 
   /*******************************************************************************
   * ROS NodeHandle
@@ -24,22 +26,22 @@ void setup()
   RCCHECK(rclc_node_init_default(&node, "opencr_node", "", &support));
 
   /*******************************************************************************
-  * Subscriber
-  *******************************************************************************/
-  RCCHECK(rclc_subscription_init_default(&cmd_vel_sub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel"));
-  RCCHECK(rclc_executor_add_subscription(&executor, &cmd_vel_sub, &cmd_vel_sub_msg, &commandVelocityCallback, ON_NEW_DATA));
-
-  RCCHECK(rclc_subscription_init_default(&imu_sub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
-  RCCHECK(rclc_executor_add_subscription(&executor, &imu_sub, &imu_sub_msg, &imuCallback, ON_NEW_DATA));
-
-  /*******************************************************************************
   * Publisher
   *******************************************************************************/
   RCCHECK(rclc_publisher_init_default(&cmd_vel_echo_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel_rc100"));
-
   RCCHECK(rclc_publisher_init_default(&odom_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry), "odom"));
-
   RCCHECK(rclc_publisher_init_default(&tf_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(tf2_msgs, msg, TFMessage), "tf_broadcaster"));
+  RCCHECK(rclc_publisher_init_default(&helohelo, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32), "helohelo"));
+
+  /*******************************************************************************
+  * Subscriber
+  *******************************************************************************/
+  RCCHECK(rclc_subscription_init_default(&cmd_vel_sub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel"));
+  RCCHECK(rclc_subscription_init_default(&imu_sub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
+
+  RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));  // Create executor
+  RCCHECK(rclc_executor_add_subscription(&executor, &cmd_vel_sub, &cmd_vel_sub_msg, &commandVelocityCallback, ON_NEW_DATA));
+  RCCHECK(rclc_executor_add_subscription(&executor, &imu_sub, &imu_sub_msg, &imuCallback, ON_NEW_DATA));
 
   /*******************************************************************************
   * Setting for SLAM and Navigation
@@ -64,23 +66,19 @@ void setup()
   pinMode(LED_ERROR, OUTPUT);
   pinMode(LED_WORKING_CHECK, OUTPUT);
   pinMode(HALLA, INPUT);
-  pinMode(HALLB, INPUT);
-  pinMode(HALLC, INPUT);
 
   attachInterrupt(digitalPinToInterrupt(HALLA), hallSeonsor_ISR, RISING);
 
   prev_update_time = millis();
   Serial.setTimeout(1);
 
-  #if SERIAL_DEBUG
-    Serial.begin(115200);
-  #endif
+  Serial.begin(115200);
 }
 
 /*******************************************************************************
 * Pin mode set (INPUT/OUTPUT, Interrupt)
 *******************************************************************************/
-void controlDCMotor()
+void controlServoMotor()
 {
   // Kinematic Bicycle Model에 의해 앞바퀴 각도를 계산
   float linear_x = goal_velocity[LINEAR], angular_z = goal_velocity[ANGULAR];
@@ -104,6 +102,23 @@ void controlDCMotor()
 
 void controlBLDCMotor()
 {
+  // Compute velocity using buffered deltaT values
+  float avgDeltaT = 0;
+  int currentSampleCount = sample_count;
+  for (int i = 0; i < currentSampleCount; i++) {
+    avgDeltaT += deltaT_buffer[i];
+  }
+
+  if (currentSampleCount > 0) {
+    avgDeltaT /= currentSampleCount; // Average of deltaT values
+  } else {
+    avgDeltaT = 1.0; // Prevent division by zero
+  }
+  motor_rpm = 60.0 / avgDeltaT; // Convert average deltaT to velocity
+  wheel_rpm = motor_rpm / DRIVE_RATIO;
+  current_linear_velocity = (wheel_rpm * 2.0 * M_PI * WHEEL_RADIUS) / 60.0;
+
+///////////////// //////////////////////////
   float linear_x = goal_velocity[LINEAR], angular_z = goal_velocity[ANGULAR];
   
   if (linear_x < -1.0) linear_x = -1.0;
@@ -137,7 +152,8 @@ void loop()
       // motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, zero_velocity);
     } 
     else {
-      controlDCMotor();
+      controlServoMotor();
+      controlBLDCMotor();
     }
     tTime[0] = t;
   }
@@ -149,7 +165,7 @@ void loop()
     tTime[1] = t;
   }
 
-    /* publish odom, tf section - 특정 주기마다 odom, tf 데이터 퍼블리시 : tTime[2] - ODOM, TF MSG SIGNAL SEQUENCE*/
+  /* publish odom, tf section - 특정 주기마다 odom, tf 데이터 퍼블리시 : tTime[2] - ODOM, TF MSG SIGNAL SEQUENCE*/
   if ((t-tTime[2]) >= (1000 / DRIVE_INFORMATION_PUBLISH_FREQUENCY))
   {
     updateMotorInfo();
@@ -157,15 +173,15 @@ void loop()
     tTime[2] = t;
   }
 
-    /* RC mode check section : tTime[3] - MOTOR MODE CHECK SEQUENCE */
-    getDataFromRemoteController(); // RC컨트롤러로부터 제어 정보 지속적으로 업데이트
-    if (mode_rc)
-    {
-        tTime[3] = t;
-    }
+  /* RC mode check section : tTime[3] - MOTOR MODE CHECK SEQUENCE */
+  getDataFromRemoteController(); // RC컨트롤러로부터 제어 정보 지속적으로 업데이트
+  if (mode_rc)
+  {
+      tTime[3] = t;
+  }
 
   // Call all the callbacks waiting to be called at that point in time
-  RCCHECK(rclc_executor_spin_one_period(&executor, RCL_MS_TO_NS(10)));
+  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
 }
 
 /*******************************************************************************
@@ -173,8 +189,8 @@ void loop()
 *******************************************************************************/
 void publishCmdVelEchMsg(void)
 {
-  cmd_vel_echo_msg.linear.x  = round(goal_velocity[LINEAR]);
-  cmd_vel_echo_msg.angular.z = round(goal_velocity[ANGULAR]);
+  cmd_vel_echo_msg.linear.x  = goal_velocity[LINEAR];
+  cmd_vel_echo_msg.angular.z = goal_velocity[ANGULAR];
 
   RCSOFTCHECK(rcl_publish(&cmd_vel_echo_pub, &cmd_vel_echo_msg, NULL));
 }
@@ -210,11 +226,28 @@ void imuCallback(const void *imu_msg)
   // Quat to Euler -> Extract yaw data
   const sensor_msgs__msg__Imu * msg = (const sensor_msgs__msg__Imu *)imu_msg;
 
-  double x = msg->orientation.x;
-  double y = msg->orientation.y;
-  double z = msg->orientation.z;
-  double w = msg->orientation.w;
+  // IMU orientation
+  imu_orientation[0] = msg->orientation.x;
+  imu_orientation[1] = msg->orientation.y;
+  imu_orientation[2] = msg->orientation.z;
+  imu_orientation[3] = msg->orientation.w;
 
+  // IMU angular covariance
+  for (int i = 0; i < 9; ++i) {
+    imu_angular_covariance[i] = msg->angular_velocity_covariance[i];
+  }
+
+  // IMU angular_velocity
+  imu_angular_velocity[0] = msg->angular_velocity.x;
+  imu_angular_velocity[1] = msg->angular_velocity.y;
+  imu_angular_velocity[2] = msg->angular_velocity.z;
+
+  // IMU linear_acceleration
+  imu_linear_acceleration[0] = msg->linear_acceleration.x;
+  imu_linear_acceleration[1] = msg->linear_acceleration.y;
+  imu_linear_acceleration[2] = msg->linear_acceleration.z;
+
+  double x = imu_orientation[0], y = imu_orientation[1], z = imu_orientation[2], w = imu_orientation[3];
   ahrs_yaw = atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
 }
 
@@ -223,16 +256,16 @@ void imuCallback(const void *imu_msg)
 *******************************************************************************/
 void updateGoalVelocity(void)
 {
-  if (mode_rc) // rc 모드일 경우 goal velocity를 RC컨트롤러 값으로 업데이트
-    {
-        goal_velocity[LINEAR] = goal_velocity_from_rc[LINEAR];
-        goal_velocity[ANGULAR] = goal_velocity_from_rc[ANGULAR];
-    }
-    else // 자율주행 모드일 경우 cmd 데이터로 부터 goal velocity 업데이트
-    {
+  // if (mode_rc) // rc 모드일 경우 goal velocity를 RC컨트롤러 값으로 업데이트
+  //   {
+  //       goal_velocity[LINEAR] = goal_velocity_from_rc[LINEAR];
+  //       goal_velocity[ANGULAR] = goal_velocity_from_rc[ANGULAR];
+  //   }
+  //   else // 자율주행 모드일 경우 cmd 데이터로 부터 goal velocity 업데이트
+  //   {
         goal_velocity[LINEAR] = goal_velocity_from_cmd[LINEAR];
         goal_velocity[ANGULAR] = goal_velocity_from_cmd[ANGULAR];
-    }
+    // }
 
   // sensors.setLedPattern(goal_velocity[LINEAR], goal_velocity[ANGULAR]);
 }
@@ -260,15 +293,6 @@ void publishDriveInformation(void)
   // calculate odometry
   calcOdometry((double)(step_time * 0.001));
 
-  // calculate Quaternion from yaw
-  double yaw = odom_pose[2];
-  double cy = cos(yaw * 0.5);
-  double sy = sin(yaw * 0.5);
-  qx = 0.0;
-  qy = 0.0;
-  qz = sy;
-  qw = cy;
-
   // odometry
   updateOdometry();
   odom_msg->header.stamp.nanosec = tv.tv_nsec;
@@ -291,13 +315,17 @@ void updateOdometry(void)
   odom_msg->pose.pose.position.y = odom_pose[1];
   odom_msg->pose.pose.position.z = 0;
 
-  odom_msg->pose.pose.orientation.x = qx;
-  odom_msg->pose.pose.orientation.y = qy;
-  odom_msg->pose.pose.orientation.z = qz;
-  odom_msg->pose.pose.orientation.w = qw;
+  odom_msg->pose.pose.orientation.x = imu_orientation[0];
+  odom_msg->pose.pose.orientation.y = imu_orientation[1];
+  odom_msg->pose.pose.orientation.z = imu_orientation[2];
+  odom_msg->pose.pose.orientation.w = imu_orientation[3];
 
-  odom_msg->twist.twist.linear.x  = odom_vel[0];
-  odom_msg->twist.twist.angular.z = odom_vel[2];
+  odom_msg->twist.twist.linear.x  = current_linear_velocity;
+  odom_msg->twist.twist.angular.z = imu_angular_velocity[2];
+
+  for (int i = 0; i < 9; ++i) {
+    odom_msg->twist.covariance[i] = imu_angular_covariance[i];
+  }
 }
 
 /*******************************************************************************
@@ -309,10 +337,10 @@ void updateTF()
   tf_msg->transforms.data[0].transform.translation.y = odom_pose[1];
   tf_msg->transforms.data[0].transform.translation.z = 0;
 
-  tf_msg->transforms.data[0].transform.rotation.x    = qx;
-  tf_msg->transforms.data[0].transform.rotation.y    = qy;
-  tf_msg->transforms.data[0].transform.rotation.z    = qz;
-  tf_msg->transforms.data[0].transform.rotation.w    = qw;
+  tf_msg->transforms.data[0].transform.rotation.x    = imu_orientation[0];
+  tf_msg->transforms.data[0].transform.rotation.y    = imu_orientation[1];
+  tf_msg->transforms.data[0].transform.rotation.z    = imu_orientation[2];
+  tf_msg->transforms.data[0].transform.rotation.w    = imu_orientation[3];
 }
 
 /*******************************************************************************
@@ -320,57 +348,13 @@ void updateTF()
 *******************************************************************************/
 bool calcOdometry(double diff_time)
 {
-  float* orientation;
-  double wheel_l, wheel_r;      // rotation value of wheel [rad]
-  double delta_s, theta, delta_theta;
-  static double last_theta = 0.0;
-  double v, w;                  // v = translational velocity [m/s], w = rotational velocity [rad/s]
-  double step_time;
-
-  wheel_l = wheel_r = 0.0;
-  delta_s = delta_theta = theta = 0.0;
-  v = w = 0.0;
-  step_time = 0.0;
-
-  step_time = diff_time;
-
-  if (step_time == 0)
+  if (diff_time == 0)
     return false;
-
-  wheel_l = TICK2RAD * (double)last_diff_tick[LEFT];
-  wheel_r = TICK2RAD * (double)last_diff_tick[RIGHT];
-
-  if (isnan(wheel_l))
-    wheel_l = 0.0;
-
-  if (isnan(wheel_r))
-    wheel_r = 0.0;
-
-  delta_s     = WHEEL_RADIUS * (wheel_r + wheel_l) / 2.0;
-  // theta = WHEEL_RADIUS * (wheel_r - wheel_l) / WHEEL_SEPARATION;  
-  //orientation = sensors.getOrientation();
-  theta       = atan2f(orientation[1]*orientation[2] + orientation[0]*orientation[3], 
-                0.5f - orientation[2]*orientation[2] - orientation[3]*orientation[3]);
-
-  delta_theta = theta - last_theta;
-
+  
   // compute odometric pose
-  odom_pose[0] += delta_s * cos(odom_pose[2] + (delta_theta / 2.0));
-  odom_pose[1] += delta_s * sin(odom_pose[2] + (delta_theta / 2.0));
-  odom_pose[2] += delta_theta;
-
-  // compute odometric instantaneouse velocity
-
-  v = delta_s / step_time;
-  w = delta_theta / step_time;
-
-  odom_vel[0] = v;
-  odom_vel[1] = 0.0;
-  odom_vel[2] = w;
-
-  last_velocity[LEFT]  = wheel_l / step_time;
-  last_velocity[RIGHT] = wheel_r / step_time;
-  last_theta = theta;
+  odom_pose[0] += current_linear_velocity * cos(ahrs_yaw) * diff_time;
+  odom_pose[1] += current_linear_velocity * sin(ahrs_yaw) * diff_time;
+  odom_pose[2] = ahrs_yaw;
 
   return true;
 }
@@ -418,8 +402,6 @@ void initPrefix(void)
 *******************************************************************************/
 void initOdom(void)
 {
-  init_encoder = true;
-
   for (int index = 0; index < 3; index++)
   {
     odom_pose[index] = 0.0;

@@ -10,6 +10,8 @@
 #include <rclc/executor.h>
 #include <rclc/timer.h>
 #include <rcutils/logging_macros.h>
+#include <micro_ros_utilities/type_utilities.h>
+#include <micro_ros_utilities/string_utilities.h>
 
 // ros/time.h
 #include <std_msgs/msg/bool.h>
@@ -130,15 +132,17 @@ uint32_t tTime[10];
 /*******************************************************************************
 * Calculation for odometry
 *******************************************************************************/
-bool init_encoder = true;
 volatile float deltaT_buffer[FILTER_WINDOW_SIZE] = {0};
-int32_t last_diff_tick[WHEEL_NUM] = {0, 0};
-double  last_rad[WHEEL_NUM]       = {0.0, 0.0};
-double  last_velocity[WHEEL_NUM]  = {0.0, 0.0};
-volatile unsigned long lastTimeA  = 0;
+unsigned long lastTimeA = 0;
 volatile int buffer_index         = 0; // Index for writing to the buffer
 volatile int sample_count         = 0; // Total number of samples in the buffer
-volatile int rpm = 0;
+volatile int motor_rpm = 0;
+volatile int wheel_rpm = 0;
+volatile float current_linear_velocity = 0;
+float imu_orientation[4];
+float imu_angular_velocity[3];
+float imu_angular_covariance[9];
+float imu_linear_acceleration[3];
 
 /*******************************************************************************
 * Declaration for controllersr
@@ -162,7 +166,7 @@ double qx = 0.0, qy = 0.0, qz = 0.0, qw = 0.0;
 * Update control message from RC controller
 *******************************************************************************/
 void getDataFromRemoteController(void);
-void controlDCMotor(void);
+void controlServoMotor(void);
 void controlBLDCMotor(void);
 
 // etc
